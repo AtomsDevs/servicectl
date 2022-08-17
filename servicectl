@@ -7,45 +7,47 @@
 SYSTEMD_UNITS_PATH="/usr/lib/systemd/system/"
 
 # Path locate this script
-DIR=$(dirname $(readlink -f $0))
+DIR=$(dirname "$(readlink -f "$0")")
 
 # Path contents symlink on systemd units files
 SERVICECTL_ENABLED_PATH="$DIR/enabled/"
 
 # Check is root
-if [ $EUID -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
   echo "You must run as root user" 2>&1
   exit 1
 fi
 
 # Parse ini file. usage: parse $inifile $section $key
 # Return 0 on success, 1 if file cannot be opened, 2 if the given key cannot be found in the given section
-function parse()
+parse()
 {
-  local _inifile=$1
-  local _section=$2
-  local _key=$3
+    _inifile="$1"
+    _section="$2"
+    _key="$3"
 
-   if [ ! -r "$_inifile" ]
-   then
-     exit 1;
-   fi        
+    # if [ ! -r "$_inifile" ]
+    # then
+    #     echo "parse: cannot read file '$_inifile'"
+    #     exit 1;
+    # fi
 
-   exec < $_inifile
+   exec < "$_inifile"
 
-   while read section; do
-     if [ "$section" = '['$_section']' ] ; then
+   while read -r section; do
+     if [ "$section" = '['"$_section"']' ] ; then
        IFS='='
-       while read key value; do
+       while read -r key value; do
          # check if we are still within our section
-         if [ `echo -n $key | grep "^\s*\[.*\]\s*$"` ]; then
+        if [ "$key" = '['"$_section"']' ] ; then
+            echo "parse: key '$_key' not found in section '$_section'"
             exit 2;
          fi
          # strip leading and trailing whitespace from keys
-         key=`echo -n "$key" | sed 's/^\s*//;s/\s*$//'`
-         _key=`echo -n "$_key" | sed 's/^\s*//;s/\s*$//'`
+         key=$(printf "%s" "$key" | sed 's/^\s*//;s/\s*$//')
+         _key=$(printf "%s" "$_key" | sed 's/^\s*//;s/\s*$//')
          if [ "$key" = "$_key" ]; then
-           echo $value
+           echo "$value"
            exit 0;
          fi
       done
@@ -55,28 +57,27 @@ function parse()
 }
 
 # Execute action from systemd service file
-function exec_action() {
-    local action=$1
-    local service=$2
-    local file="${SYSTEMD_UNITS_PATH}${service}.service"
-    local is_required=1 # by default turn action is required
-    local cmd=""
+exec_action() {
+    action="$1"
+    service="$2"
+    file="${SYSTEMD_UNITS_PATH}${service}.service"
+    is_required=1 # by default turn action is required
+    cmd=""
         
     # if passed arg $3 then set value
-    if [[ -n $3 ]]; then
-        local is_required=$3
+    if [ -n "$3" ]; then
+        is_required="$3"
     fi
 
-    cmd=`parse $file Service $action`
-    local ret=$?    
+    cmd=$(parse "$file" Service "$action")
+    ret=$?    
     if [ $ret = 1 ]; then
         echo "Error: file $file cannot be opened"
         return 1
     fi
     if [ $ret = 2 ]; then
-    
         # if action required, return error
-        if [ $is_required = 1 ]; then
+        if [ "$is_required" = 1 ]; then
             echo "Error: action $action not found in file $file"
             return 1
         fi
@@ -84,86 +85,110 @@ function exec_action() {
         return 0        
     fi
   
-    eval $cmd
+    eval "$cmd"
     return $?
 }
 
-function exec_if_exists() {
-    exec_action $@ 0
+exec_if_exists() {
+    exec_action "$@" 0
 }
 
-function exec_stop() {
-    local service=$1
-    local file="${SYSTEMD_UNITS_PATH}${service}.service"
-    local cmd=""
+exec_stop() {
+    service="$1"
+    file="${SYSTEMD_UNITS_PATH}${service}.service"
+    cmd=""
     
-    cmd=`parse $file Service ExecStop`
-    local ret=$?
+    cmd=$(parse "$file" Service ExecStop)
+    ret=$?
     
     # if ExecStop exists
     if [ $ret = 0 ]; then
-        exec_action ExecStop $service
+        exec_action ExecStop "$service"
         return $?
     fi
     
     # get path pid file
-    pid_file=`parse $file Service PIDFile`
-    local ret=$?
+    pid_file=$(parse "$file" Service PIDFile)
+    ret=$?
     if [ $ret != 0 ]; then
         echo "Error: attribute PIDFile not exists in file $file"
         return 1
     fi
 
-    read PID < $pid_file
+    read -r PID < "$pid_file"
     kill -TERM "$PID" || echo "Couldn't kill PID"
 }
 
-if [[ -z ${@:2} ]]; then
-    echo "Error: you must specify the service"
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <action> <service> [<is_required>]"
     exit 1
 fi
 
 # Switch action
 case "$1" in
     start)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@";
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
-            exec_if_exists ExecStartPre $service
-            if [ $? = 0 ]; then
-                exec_action ExecStart $service
+            if exec_if_exists ExecStartPre "$service"; then
+                exec_action ExecStart "$service"
             fi
         done
     ;;
     
     stop)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@";
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
-            exec_stop $service
+            exec_stop "$service"
         done
     ;;
     
     restart)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@";
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
-            exec_stop $service
-            exec_action ExecStart $service
+            exec_stop "$service"
+            exec_action ExecStart "$service"
         done
     ;;
     
     reload)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@";
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
-            exec_action ExecReload $service
+            exec_action ExecReload "$service"
         done
     ;;
 
     enable)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@";
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
             file="${SYSTEMD_UNITS_PATH}${service}.service"
             enabled_symlink="${SERVICECTL_ENABLED_PATH}${service}.service"
@@ -184,8 +209,13 @@ case "$1" in
     ;;
 
     disable)
-        for service in ${@:2} 
+		i=0;
+        for service in "$@"; 
         do
+			if [ "$i" -ne "1" ]; then 
+				i=$((i+1))
+				continue;
+			fi
             service=${service%".service"}
             file="${SERVICECTL_ENABLED_PATH}${service}.service"
             if [ ! -f "$file" ]; then
@@ -194,7 +224,7 @@ case "$1" in
             fi
             
             echo "rm $file"
-            rm $file
+            rm "$file"
         done
     ;;
     

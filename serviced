@@ -4,14 +4,14 @@
 #
 
 # Path locate this script
-DIR=$(dirname $(readlink -f $0))
+DIR=$(dirname "$(readlink -f "$0")")
 
 # Path contents symlink on systemd units files
 SERVICECTL_ENABLED_PATH="$DIR/enabled/"
 
 action="start"
-if [[ -n $1 ]]; then
+if [ -n "$1" ]; then
     action=$1
 fi
 
-servicectl $action $(dir $SERVICECTL_ENABLED_PATH)
+servicectl "$action" "$(dir "$SERVICECTL_ENABLED_PATH")"
